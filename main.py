@@ -104,59 +104,56 @@ def read_root():
 # -------------------------------
 @app.post("/upload/")
 async def upload_zip(file: UploadFile = File(...)):
-    """
-    Accepts a ZIP file containing Python code,
-    extracts all `.py` files, parses their functions,
-    and generates OpenAI-powered summaries for each one.
-    """
-    # Validate the uploaded file is a .zip
+    # I start by validating the file type.
     if not file.filename.endswith(".zip"):
         raise HTTPException(status_code=400, detail="Only ZIP files are allowed.")
 
-    # Use a temporary directory to avoid saving files permanently
     with tempfile.TemporaryDirectory() as temp_dir:
         temp_dir_path = Path(temp_dir)
 
-        # Save the uploaded ZIP file temporarily in memory
+        # I save the uploaded ZIP file temporarily on disk.
         temp_zip_path = temp_dir_path / file.filename
         with open(temp_zip_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
 
-        # Extract the contents of the ZIP into the temp directory
+        # I extract all files from the ZIP into the temporary directory.
         with zipfile.ZipFile(temp_zip_path, "r") as zip_ref:
             zip_ref.extractall(temp_dir_path)
 
-        # Prepare a list of async tasks to process each .py file
-        tasks = []
-
-        # Define inner async function to parse + summarize one file
-        async def parse_and_summarize(file_path: Path, relative_path: Path):
-            # Parse function info from the file
-            functions = parse_python_file(file_path)
-
-            # For each function, generate a GPT summary
-            for func in functions:
-                func['summary'] = await generate_function_summary(func['source'])
-
-            return {
-                "file": str(relative_path),
-                "functions": functions
-            }
-
-        # Walk through extracted directory to find all .py files
+        # Next, I walk through all extracted files and parse Python functions.
+        # I collect all functions from all files before summarizing.
+        file_functions_map = []
+        all_function_sources = []
         for root, dirs, files in os.walk(temp_dir_path):
             for file_name in files:
                 if file_name.endswith(".py"):
                     full_path = Path(root) / file_name
                     relative_path = full_path.relative_to(temp_dir_path)
-                    tasks.append(parse_and_summarize(full_path, relative_path))
+                    functions = parse_python_file(full_path)
+                    if functions:
+                        file_functions_map.append({
+                            "file": str(relative_path),
+                            "functions": functions
+                        })
+                        for func in functions:
+                            all_function_sources.append(func["source"])
 
-        # Run all parsing/summarizing tasks concurrently
-        parsed_data = await asyncio.gather(*tasks)
+        # Now, I send all collected function sources to the batch summarizer in one request.
+        summaries = await generate_function_summary_batch(all_function_sources)
 
-    # Return the results as JSON
+        # After I get the summaries, I assign each summary back to the corresponding function.
+        summary_idx = 0
+        for file_entry in file_functions_map:
+            for func in file_entry["functions"]:
+                if summary_idx < len(summaries):
+                    func["summary"] = summaries[summary_idx]
+                    summary_idx += 1
+                else:
+                    func["summary"] = "No summary available"
+
+    # Finally, I return the file name, a success message, and the parsed data with summaries.
     return {
         "filename": file.filename,
-        "message": "Upload, parsing, and GPT summaries complete!",
-        "parsed": parsed_data
+        "message": "Upload, parsing, and batch GPT summaries complete!",
+        "parsed": file_functions_map
     }
