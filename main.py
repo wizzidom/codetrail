@@ -10,6 +10,9 @@ import asyncio
 from openai import AsyncOpenAI
 from dotenv import load_dotenv
 from summarizers import generate_function_summary
+from fastapi.middleware.cors import CORSMiddleware
+
+
 
 
 # Load environment variables from .env file
@@ -21,7 +24,14 @@ client = AsyncOpenAI()  # Uses OPENAI_API_KEY from env
 
 # Create FastAPI app instance
 app = FastAPI()
-
+#Allow certain ports for my frontend I am using 3000
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 # -------------------------------
 # Function: Parse a Python file for functions
 # -------------------------------
